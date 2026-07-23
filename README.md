@@ -61,7 +61,7 @@ already have independent knowledge of your code:
 | Use | You show it to | Receipt says | Code must be timestamped? |
 |---|---|---|---|
 | **The auditor case** — "this payment went to me" | A stranger to your code: accountant, exchange, arbitrator you just met | "tx T paid my code" | **Yes — load-bearing** |
-| **Attack 1 defense** — "you never paid me" | An arbitrator, against the claimant | "tx T paid my code *nothing*" | No |
+| **Attack 1 defense** — "you never paid me" | An arbitrator, against the (self-claimed) sender | "tx T paid my code *nothing*" | No |
 | **Attack 2 offense** — "he was paid and denies it" | An arbitrator, with the payer present | "tx T paid the code he published" | No |
 
 **The auditor case is the original point of the tool.** The scan key is all-or-nothing: hand it
