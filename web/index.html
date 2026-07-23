@@ -230,8 +230,8 @@
 </header>
 
 <div class="row">
-  <section class="panel" aria-label="Case exhibits">
-    <h2>Case exhibits</h2>
+  <section class="panel" aria-label="The two attacks">
+    <h2>The two attacks</h2>
     <div id="bundles"><div class="empty">loading…</div></div>
   </section>
 
@@ -283,19 +283,21 @@ const STAMP = {
   INVALID:         { text: "Void · proof rejected",  cls: "void" },
 };
 
-/* Exhibit roles are read off the bundle filename prefix (attack1-, attack1b-, attack2-…). */
+/* Exhibit roles are read off the bundle filename prefix. Two attacks, nothing else:
+   Attack 1 = the fake payment claim ("I paid you") — defense proof + his forged evidence.
+   Attack 2 = the payment denial ("never arrived") — the honest receipt + the fake tour. */
 const ROLES = [
-  { pre: "attack1b", cls: "evidence",
-    eyebrow: "Case 1b · submitted evidence",
-    title: "The claimant’s own “receipt” — exhibit A" },
+  { pre: "attack1-forged", cls: "evidence",
+    eyebrow: "Attack 1 · his forged evidence",
+    title: "The claimant’s own “receipt”" },
   { pre: "attack1", cls: "defense",
-    eyebrow: "Case 1 · the dispute",
+    eyebrow: "Attack 1 · the fake payment claim",
     title: "“You owe me — I already paid you.”" },
   { pre: "attack2-fake", cls: "evidence",
-    eyebrow: "Case 2 · the fake tour",
+    eyebrow: "Attack 2 · the fake tour",
     title: "“Nothing arrived” — with a doctored secret" },
   { pre: "attack2", cls: "receipt-ok",
-    eyebrow: "Case 2 · the honest receipt",
+    eyebrow: "Attack 2 · the payment denial, busted",
     title: "The payment, proven from public data" },
 ];
 
