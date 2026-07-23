@@ -83,6 +83,18 @@
     <div class="err" id="err"></div>
   </section>
 
+  <section class="panel">
+    <h2>3 · Fresh demo — new identity, same sats</h2>
+    <div class="hintline">Archives the current story, mints a brand-new <b>tsp1…</b> code,
+    timestamps it, pays it ~5,000 sats from this wallet (recycling the previous demo's payment
+    back first), and rebuilds all five story buttons against the new identity. Costs ~800 sats
+    of fees per cycle — no faucet needed, ever.</div>
+    <button class="send" id="newdemo" style="background: var(--brass); color: #1A2030;">
+      🔄 NEW FRESH DEMO</button>
+    <div class="err" id="nderr"></div>
+    <div class="hintline" id="ndok"></div>
+  </section>
+
   <section class="panel result" id="result">
     <h2>Payment sent — demo complete</h2>
     <div class="txid" id="txid"></div>
@@ -173,6 +185,32 @@ document.getElementById("send").onclick = async () => {
     btn.textContent = "RETRY — SEND 21,000 SATS";
   } finally {
     busy = false;
+  }
+};
+
+document.getElementById("newdemo").onclick = async () => {
+  busy = true;
+  const btn = document.getElementById("newdemo");
+  btn.disabled = true;
+  btn.textContent = "RECYCLING · NEW CODE · TIMESTAMPING · PAYING · MINTING…";
+  document.getElementById("nderr").textContent = "";
+  document.getElementById("ndok").textContent = "";
+  try {
+    const res = await (await fetch("wallet/newdemo", { method: "POST" })).json();
+    if (res.error) throw new Error(res.error);
+    document.getElementById("ndok").innerHTML =
+      `fresh demo ready ✓ new code ${short(res.new_code, 14)} paid ` +
+      `${res.amount_sats.toLocaleString("en-US")} sats in tx ${short(res.txid, 8)} — ` +
+      `<a href="./">open the demo →</a>`;
+    btn.textContent = "🔄 NEW FRESH DEMO";
+    btn.disabled = false;
+  } catch (e) {
+    document.getElementById("nderr").textContent = e.message;
+    btn.textContent = "🔄 RETRY — NEW FRESH DEMO";
+    btn.disabled = false;
+  } finally {
+    busy = false;
+    poll();
   }
 };
 

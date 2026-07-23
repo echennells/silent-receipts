@@ -49,6 +49,11 @@ _ots_cache = {}
 _witness_lock = threading.Lock()
 _send_lock = threading.Lock()
 
+# a valid-but-wrong secret (the generator point) for the fake-tour exhibit
+GEN_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+# a cached signet tx that pays nobody we know — attack 1's "he says he paid me" tx
+NONPAY_TX = "6b5ee9e16948e2bfca1a7a31b318b7f8509929bc18fae92a494462824ff63fc1"
+
 
 def esplora(path, data=None):
     req = urllib.request.Request(ESPLORA + path, data=data,
@@ -91,7 +96,7 @@ def wallet_send():
         u = max(utxos, key=lambda x: x["value"])
         spk = "5120" + sender["xonly"]
         fee = 400
-        amount = min(21000, u["value"] - fee - 400)  # adapt to whatever the faucet gave
+        amount = min(5000, u["value"] - fee - 400)  # small sends: preserve the piggy bank
         if amount < 1000:
             return 400, {"error": f"largest UTXO too small ({u['value']} sats)"}
         proc = subprocess.run(
@@ -142,6 +147,131 @@ def wallet_send():
                 "to": sendres.get("to")}
         json.dump(mark, open(SENT_MARK, "w"))
         return 200, mark
+
+
+def new_demo():
+    """Full fresh cycle: recycle old payment -> archive identity -> new code ->
+    timestamp it -> pay it -> re-mint all five story bundles. ~800 sats of fees."""
+    with _send_lock:
+        log = []
+        sender = json.load(open(SENDER_FILE))
+
+        # 0. recycle: if the current code's payment output is unspent, sweep it home
+        try:
+            cur = json.load(open(os.path.join(BUNDLE_DIR, "auditor-receipt.json")))
+            t, o = cur["txid"], cur["outputs"][0]
+            sp = json.loads(esplora(f"/tx/{t}/outspend/{o['vout']}"))
+            if not sp.get("spent") and o["amount_sats"] > 1500:
+                pr = subprocess.run(
+                    [RECEIPT_BIN, "spend", "--txid", t, "--keys", KEYS_FILE,
+                     "--cache", CACHE_DIR, "--dest", sender["address"],
+                     "--amount", str(o["amount_sats"] - 400), "--fee", "400"],
+                    capture_output=True, text=True, timeout=30)
+                if pr.returncode == 0:
+                    esplora("/tx", data=json.loads(pr.stdout)["hex"].encode())
+                    log.append(f"recycled {o['amount_sats'] - 400} sats back to the wallet")
+                    time.sleep(2)
+        except Exception as e:
+            log.append(f"recycle skipped: {e}")
+
+        # 1. archive the old identity + bundles (keys are archived, never deleted)
+        arch = os.path.join(DATA_DIR, "archive", str(int(time.time())))
+        os.makedirs(arch, exist_ok=True)
+        if os.path.isfile(KEYS_FILE):
+            os.rename(KEYS_FILE, os.path.join(arch, "keys.json"))
+        for f in os.listdir(BUNDLE_DIR):
+            if f.endswith(".json"):
+                os.rename(os.path.join(BUNDLE_DIR, f), os.path.join(arch, f))
+        if os.path.isfile(SENT_MARK):
+            os.remove(SENT_MARK)
+
+        # 2. fresh identity
+        kg = subprocess.run([RECEIPT_BIN, "keygen", "--network", "signet",
+                             "--out", KEYS_FILE],
+                            capture_output=True, text=True, timeout=15)
+        if kg.returncode != 0:
+            return 500, {"error": "keygen: " + kg.stderr[:200]}
+        new_code = kg.stdout.strip()
+
+        # 3. timestamp the new code NOW — before its payment exists (pre-commitment)
+        try:
+            art = os.path.join(OTS_DIR, "artifacts")
+            os.makedirs(art, exist_ok=True)
+            ap = os.path.join(art, "address.txt")
+            with open(ap, "w") as f:
+                f.write(new_code)
+            for stale in (ap + ".ots", ap + ".ots.ots"):
+                if os.path.exists(stale):
+                    os.remove(stale)
+            subprocess.run([OTS_BIN, "stamp", ap], capture_output=True, timeout=20)
+            log.append("new code timestamped before its payment")
+        except Exception:
+            pass
+
+        # 4. pay the new code from the sender wallet
+        utxos = json.loads(esplora(f"/address/{sender['address']}/utxo"))
+        if not utxos:
+            return 400, {"error": "sender wallet empty — recycle may still be settling; retry in a minute"}
+        u = max(utxos, key=lambda x: x["value"])
+        fee = 400
+        amount = min(5000, u["value"] - fee - 400)
+        if amount < 1000:
+            return 400, {"error": f"largest UTXO too small ({u['value']} sats)"}
+        spk = "5120" + sender["xonly"]
+        pr = subprocess.run(
+            [RECEIPT_BIN, "send", "--sender", SENDER_FILE, "--keys", KEYS_FILE,
+             "--amount", str(amount), "--fee", str(fee),
+             "--utxo", f"{u['txid']}:{u['vout']}:{u['value']}:{spk}"],
+            capture_output=True, text=True, timeout=30)
+        if pr.returncode != 0:
+            return 500, {"error": "send: " + pr.stderr[:300]}
+        try:
+            txid = esplora("/tx", data=json.loads(pr.stdout)["hex"].encode()).decode().strip()
+        except urllib.error.HTTPError as e:
+            return 500, {"error": "broadcast: " + e.read().decode()[:300]}
+        for _ in range(10):
+            r = subprocess.run(["scripts/fetch_tx.sh", txid, "signet"],
+                              capture_output=True, timeout=30,
+                              env={**os.environ, "CACHE_DIR": CACHE_DIR})
+            if r.returncode == 0:
+                break
+            time.sleep(2)
+
+        # 5. re-mint the five story bundles against the fresh identity
+        def mint(verifier, out_name, t):
+            return subprocess.run(
+                [RECEIPT_BIN, "prove", "--txid", t, "--verifier", verifier, "--own",
+                 "--keys", KEYS_FILE, "--cache", CACHE_DIR,
+                 "--out", os.path.join(BUNDLE_DIR, out_name)],
+                capture_output=True, text=True, timeout=30)
+
+        mint("accountant", "auditor-receipt.json", txid)
+        mint("arbitrator", "attack2-receipt.json", txid)
+        try:
+            b = json.load(open(os.path.join(BUNDLE_DIR, "attack2-receipt.json")))
+            b["claim"] = "not_paid"
+            b["shared_secret"] = GEN_HEX
+            b["outputs"] = []
+            json.dump(b, open(os.path.join(BUNDLE_DIR, "attack2-fake-tour.json"), "w"),
+                      indent=2)
+        except (OSError, json.JSONDecodeError):
+            pass
+        mint("bitcoin++ judges", "attack1-he-says-he-paid-me.json", NONPAY_TX)
+        try:
+            b = json.load(open(os.path.join(BUNDLE_DIR, "attack1-he-says-he-paid-me.json")))
+            b["claim"] = "paid"
+            json.dump(b, open(os.path.join(BUNDLE_DIR, "attack1-forged-receipt.json"), "w"),
+                      indent=2)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        # 6. the gratuitous rest, off-thread
+        threading.Thread(
+            target=lambda: subprocess.run(["scripts/ots_everything.sh"],
+                                          capture_output=True, timeout=180),
+            daemon=True).start()
+
+        return 200, {"new_code": new_code, "txid": txid, "amount_sats": amount, "log": log}
 
 
 def ots_status(path):
@@ -277,6 +407,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/wallet/send":
             try:
                 code, body = wallet_send()
+                self._send(code, body)
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+            return
+        if self.path == "/wallet/newdemo":
+            try:
+                code, body = new_demo()
                 self._send(code, body)
             except Exception as e:
                 self._send(500, {"error": str(e)})
