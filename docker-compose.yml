@@ -1,0 +1,14 @@
+services:
+  receipts:
+    build: .
+    ports:
+      - "8552:8552"
+    volumes:
+      # keys, cached txs, and bundles live outside the image (and outside git)
+      - ./data:/app/data
+    # GUI: http://localhost:8552
+    # CLI examples:
+    #   docker compose run --rm receipts receipt keygen --network signet
+    #   docker compose run --rm receipts scripts/fetch_tx.sh <txid> signet
+    #   docker compose run --rm receipts receipt prove --txid <txid> --verifier judge --own
+    #   docker compose run --rm receipts receipt verify --bundle data/bundles/<file>.json

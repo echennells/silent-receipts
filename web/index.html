@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silent Receipts</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #12161f; --edge: #232a38;
+    --text: #e8edf4; --dim: #8b96a8;
+    --green: #2ee06f; --red: #ff4d5e; --amber: #ffb454; --accent: #4da3ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    min-height: 100vh; padding: 2.2rem clamp(1rem, 4vw, 3rem);
+  }
+  header h1 { font-size: clamp(1.6rem, 4vw, 2.6rem); letter-spacing: .06em; }
+  header h1 .s { color: var(--accent); }
+  header p { color: var(--dim); margin-top: .4rem; font-size: .95rem; max-width: 60ch; }
+  .row { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 1.6rem; align-items: flex-start; }
+  .col { flex: 1 1 340px; min-width: 320px; }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 1.1rem; }
+  .panel h2 { font-size: .8rem; color: var(--dim); text-transform: uppercase; letter-spacing: .12em; margin-bottom: .8rem; }
+  button.bundle {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: #0e1219; color: var(--text); border: 1px solid var(--edge);
+    border-radius: 8px; padding: .85rem 1rem; margin-bottom: .6rem;
+    font: inherit; font-size: .92rem; transition: border-color .15s;
+  }
+  button.bundle:hover { border-color: var(--accent); }
+  button.bundle .tag { font-weight: 700; letter-spacing: .05em; }
+  button.bundle .tag.paid { color: var(--green); }
+  button.bundle .tag.not_paid { color: var(--red); }
+  button.bundle .sub { color: var(--dim); font-size: .78rem; margin-top: .25rem; word-break: break-all; }
+  #verdict { display: none; }
+  .big {
+    font-size: clamp(1.6rem, 4.5vw, 2.6rem); font-weight: 800; letter-spacing: .04em;
+    padding: 1.2rem; border-radius: 10px; text-align: center; margin-bottom: 1rem;
+    border: 2px solid;
+  }
+  .big.PAID_PROVEN     { color: var(--green); border-color: var(--green); background: rgba(46,224,111,.07); }
+  .big.NOT_PAID_PROVEN { color: var(--red);   border-color: var(--red);   background: rgba(255,77,94,.07); }
+  .big.INVALID         { color: var(--amber); border-color: var(--amber); background: rgba(255,180,84,.07); }
+  .kv { font-size: .85rem; margin-bottom: 1rem; }
+  .kv div { padding: .18rem 0; word-break: break-all; }
+  .kv b { color: var(--dim); font-weight: 400; display: inline-block; min-width: 6.5rem; }
+  .amount { color: var(--green); font-weight: 700; }
+  ol.steps { list-style: none; }
+  ol.steps li {
+    padding: .5rem .6rem; border-left: 3px solid var(--edge); margin-bottom: .45rem;
+    font-size: .84rem; background: #0e1219; border-radius: 0 6px 6px 0;
+  }
+  ol.steps li.ok   { border-left-color: var(--green); }
+  ol.steps li.bad  { border-left-color: var(--red); }
+  ol.steps li .nm  { font-weight: 700; }
+  ol.steps li .dt  { color: var(--dim); display: block; margin-top: .15rem; }
+  .scope { color: var(--dim); font-size: .78rem; margin-top: 1rem; line-height: 1.5; }
+  .empty { color: var(--dim); font-size: .9rem; line-height: 1.6; }
+  footer { color: var(--dim); font-size: .75rem; margin-top: 2.2rem; line-height: 1.6; }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SILENT <span class="s">RECEIPTS</span></h1>
+  <p>Receipts for BIP352 silent payments — prove one payment, or one non-payment,
+     to one chosen verifier, without revealing your scan key. Master keys never move.</p>
+</header>
+
+<div class="row">
+  <div class="col panel">
+    <h2>Receipt bundles</h2>
+    <div id="bundles"><div class="empty">loading…</div></div>
+  </div>
+
+  <div class="col panel" id="result">
+    <h2>Verification</h2>
+    <div class="empty" id="hint">
+      Pick a bundle. The verifier uses <b>only public chain data</b> — no node,
+      no keys, no trust in the prover — and re-derives every spot in the
+      transaction where a payment to the address could exist.
+    </div>
+    <div id="verdict">
+      <div class="big" id="bigline"></div>
+      <div class="kv" id="kv"></div>
+      <ol class="steps" id="steps"></ol>
+      <div class="scope" id="scope"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  One primitive, four sentences: I was paid / it paid me nothing (receiver) ·
+  I paid you / I did not pay that (sender). Built on
+  <a href="https://github.com/bitcoindevkit/bdk-sp">bdk-sp</a> —
+  Monero's InProof/OutProof, ported to Bitcoin.
+</footer>
+
+<script>
+const VERDICT_TEXT = {
+  PAID_PROVEN:     "✔ PAYMENT PROVEN",
+  NOT_PAID_PROVEN: "✘ NO PAYMENT — PROVEN",
+  INVALID:         "⚠ PROOF INVALID — REJECTED",
+};
+
+function short(s, n = 12) { return s && s.length > 2 * n ? s.slice(0, n) + "…" + s.slice(-n) : s; }
+function sats(n) { return n.toLocaleString("en-US") + " sats"; }
+
+async function loadBundles() {
+  const el = document.getElementById("bundles");
+  try {
+    const items = await (await fetch("/bundles")).json();
+    if (!items.length) {
+      el.innerHTML = '<div class="empty">No bundles yet.<br><br>' +
+        'Mint one:<br><code>receipt prove --txid &lt;txid&gt; --verifier judge</code></div>';
+      return;
+    }
+    el.innerHTML = "";
+    for (const b of items) {
+      const btn = document.createElement("button");
+      btn.className = "bundle";
+      const label = b.claim === "paid"
+        ? '<span class="tag paid">RECEIPT: payment claimed</span>'
+        : '<span class="tag not_paid">DISPUTE: “this tx paid me nothing”</span>';
+      btn.innerHTML = label +
+        `<span class="sub">tx ${short(b.txid)} → ${short(b.address, 14)}<br>` +
+        `for: ${b.verifier} · ${b.file}</span>`;
+      btn.onclick = () => verify(b.file);
+      el.appendChild(btn);
+    }
+  } catch (e) {
+    el.innerHTML = `<div class="empty">error: ${e}</div>`;
+  }
+}
+
+async function verify(file) {
+  document.getElementById("hint").style.display = "none";
+  const v = document.getElementById("verdict");
+  v.style.display = "block";
+  document.getElementById("bigline").textContent = "verifying…";
+  document.getElementById("bigline").className = "big";
+  document.getElementById("kv").innerHTML = "";
+  document.getElementById("steps").innerHTML = "";
+  try {
+    const res = await (await fetch("/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bundle: file }),
+    })).json();
+    if (res.error) throw new Error(res.error);
+    render(res);
+  } catch (e) {
+    document.getElementById("bigline").textContent = "error: " + e.message;
+    document.getElementById("bigline").className = "big INVALID";
+  }
+}
+
+function render(r) {
+  const big = document.getElementById("bigline");
+  big.textContent = VERDICT_TEXT[r.verdict] || r.verdict;
+  big.className = "big " + r.verdict;
+
+  const kv = document.getElementById("kv");
+  let rows =
+    `<div><b>address</b> ${r.address}</div>` +
+    `<div><b>transaction</b> ${r.txid}</div>` +
+    `<div><b>issued to</b> ${r.verifier}</div>`;
+  for (const o of r.outputs || []) {
+    rows += `<div><b>output ${o.vout}</b> <span class="amount">${sats(o.amount_sats)}</span>` +
+      (o.spend_sig === "valid" ? " · spend key proven (ownership, not just detection)" : "") +
+      `</div>`;
+  }
+  kv.innerHTML = rows;
+
+  const ol = document.getElementById("steps");
+  for (const s of r.steps || []) {
+    const li = document.createElement("li");
+    li.className = s.ok ? "ok" : "bad";
+    li.innerHTML = `<span class="nm">${s.ok ? "✓" : "✗"} ${s.step}</span>` +
+                   `<span class="dt">${s.detail}</span>`;
+    ol.appendChild(li);
+  }
+  document.getElementById("scope").textContent = r.scope_note || "";
+}
+
+loadBundles();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# Build artifacts
+target/
+
+# Runtime data: PRIVATE KEYS live in data/keys.json — never commit this tree.
+data/
+
+# OpenTimestamps artifacts kept locally with the demo data
+*.ots
+address.txt

@@ -1,0 +1,25 @@
+[package]
+name = "silent-receipts"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Receipts for Bitcoin silent payments (BIP352): prove one payment - or one non-payment - to one chosen verifier, without revealing your scan key."
+license = "MIT"
+repository = "https://github.com/echennells/silent-receipts"
+
+[[bin]]
+name = "receipt"
+path = "src/main.rs"
+
+[dependencies]
+# The crypto core: bitcoindevkit's silent payments toolkit, pinned to a commit.
+# bdk_sp re-exports `bitcoin` (0.32.x) - never add a top-level bitcoin dep here.
+bdk_sp = { git = "https://github.com/bitcoindevkit/bdk-sp", rev = "71ebdef2a42be50de53637defed07be77f9a9c4e" }
+# BIP374 DLEQ proofs - standalone workspace member of the same repo, not re-exported by bdk_sp.
+dleq = { git = "https://github.com/bitcoindevkit/bdk-sp", rev = "71ebdef2a42be50de53637defed07be77f9a9c4e" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+
+[profile.release]
+opt-level = 2
