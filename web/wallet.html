@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silent Receipts · testing wallet</title>
+<style>
+  :root {
+    --ink-0: #0C111C; --ink-1: #131A28; --ink-2: #1D2637;
+    --text: #DCE3EE; --dim: #7E8AA0; --brass: #E8A33D;
+    --ok: #2E7D52; --void: #B3403A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: var(--ink-0); }
+  body {
+    background:
+      radial-gradient(1200px 500px at 70% -10%, rgba(76,110,168,.08), transparent 60%),
+      var(--ink-0);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 15px; line-height: 1.6;
+    min-height: 100vh; display: flex; justify-content: center;
+    padding: clamp(1.2rem, 4vw, 3rem);
+  }
+  main { width: min(680px, 100%); }
+  h1 { font-size: 1.3rem; letter-spacing: .12em; font-weight: 800; }
+  h1 em { font-style: normal; color: var(--brass); }
+  .sub { color: var(--dim); font-size: .85rem; margin: .4rem 0 1.4rem; }
+  .panel {
+    background: var(--ink-1); border: 1px solid var(--ink-2);
+    border-radius: 10px; padding: 1.2rem; margin-bottom: 1rem;
+  }
+  .panel h2 {
+    font-size: .68rem; color: var(--dim); text-transform: uppercase;
+    letter-spacing: .22em; margin-bottom: .8rem;
+  }
+  .addr {
+    background: var(--ink-0); border: 1px dashed var(--ink-2); border-radius: 8px;
+    padding: .9rem; word-break: break-all; font-size: .95rem; cursor: pointer;
+    transition: border-color .15s;
+  }
+  .addr:hover { border-color: var(--brass); }
+  .addr small { display: block; color: var(--dim); font-size: .68rem; margin-top: .4rem; }
+  .stat { font-size: .9rem; margin-top: .8rem; }
+  .stat b { color: var(--brass); font-variant-numeric: tabular-nums; }
+  .hintline { color: var(--dim); font-size: .78rem; margin-top: .6rem; }
+  .hintline a { color: var(--brass); text-decoration: none; }
+  button.send {
+    width: 100%; padding: 1.1rem; margin-top: .4rem;
+    font: inherit; font-size: 1.05rem; font-weight: 800; letter-spacing: .08em;
+    color: #fff; background: var(--ok); border: 0; border-radius: 10px; cursor: pointer;
+  }
+  button.send:disabled { background: var(--ink-2); color: var(--dim); cursor: default; }
+  button.send:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  .result { display: none; border-left: 4px solid var(--ok); }
+  .result .txid { word-break: break-all; font-size: .85rem; margin: .5rem 0; }
+  .result a { color: var(--brass); text-decoration: none; }
+  .err { color: var(--void); font-size: .82rem; margin-top: .6rem; white-space: pre-wrap; }
+  footer { color: var(--dim); font-size: .74rem; margin-top: 1.4rem; }
+  footer a { color: var(--brass); text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>TESTING <em>WALLET</em></h1>
+  <p class="sub">A throwaway signet sender, so the demo can pay itself. Fund it from any signet
+  faucet; one button then makes a real BIP352 silent payment to the demo's published code and
+  mints every remaining receipt automatically.</p>
+
+  <section class="panel">
+    <h2>1 · Fund this signet address (tap to copy)</h2>
+    <div class="addr" id="addr" title="tap to copy">loading…<small id="copyhint">tap to copy ·
+    get coins at signetfaucet.com</small></div>
+    <div class="stat" id="balance">balance: checking…</div>
+    <div class="hintline">Faucet: <a href="https://signetfaucet.com" target="_blank" rel="noopener">signetfaucet.com</a>
+    — paste the address, coins arrive in the next block (~10 min, often faster in mempool).</div>
+  </section>
+
+  <section class="panel">
+    <h2>2 · Send the silent payment</h2>
+    <div class="hintline" id="target">to: …</div>
+    <button class="send" id="send" disabled>WAITING FOR FUNDS…</button>
+    <div class="err" id="err"></div>
+  </section>
+
+  <section class="panel result" id="result">
+    <h2>Payment sent — demo complete</h2>
+    <div class="txid" id="txid"></div>
+    <div class="hintline">
+      <a id="explorer" href="#" target="_blank" rel="noopener">view on mempool.space</a> ·
+      <a href="./">open the demo — the green buttons are live →</a>
+    </div>
+  </section>
+
+  <footer><a href="./">← back to the demo</a></footer>
+</main>
+
+<script>
+let st = null;
+let busy = false;
+
+function short(s, n = 14) { return s && s.length > 2 * n ? s.slice(0, n) + "…" + s.slice(-n) : s; }
+
+async function poll() {
+  if (busy) return;
+  try {
+    st = await (await fetch("wallet/status")).json();
+    if (st.error && !st.address) throw new Error(st.error);
+    document.getElementById("addr").childNodes[0].textContent = st.address;
+    document.getElementById("target").textContent = "to: " + short(st.to_code || "?", 18) +
+      " (the demo's published code)";
+    const btn = document.getElementById("send");
+    if (st.sent) {
+      showSent(st.sent);
+    } else if ((st.balance_sats || 0) > 25000) {
+      document.getElementById("balance").innerHTML =
+        `balance: <b>${st.balance_sats.toLocaleString("en-US")}</b> sats · funded ✓`;
+      btn.disabled = false;
+      btn.textContent = "SEND 21,000 SATS — SILENTLY";
+    } else {
+      document.getElementById("balance").innerHTML =
+        `balance: <b>${(st.balance_sats || 0).toLocaleString("en-US")}</b> sats — waiting for the faucet…`;
+      btn.disabled = true;
+      btn.textContent = "WAITING FOR FUNDS…";
+    }
+  } catch (e) {
+    document.getElementById("balance").textContent = "status error: " + e.message;
+  }
+}
+
+function showSent(s) {
+  const btn = document.getElementById("send");
+  btn.disabled = true;
+  btn.textContent = "SENT ✓";
+  const r = document.getElementById("result");
+  r.style.display = "block";
+  document.getElementById("txid").textContent = s.txid;
+  document.getElementById("explorer").href =
+    "https://mempool.space/signet/tx/" + s.txid;
+}
+
+document.getElementById("addr").onclick = () => {
+  if (st && st.address) {
+    navigator.clipboard.writeText(st.address);
+    document.getElementById("copyhint").textContent = "copied ✓";
+    setTimeout(() => document.getElementById("copyhint").textContent =
+      "tap to copy · get coins at signetfaucet.com", 1600);
+  }
+};
+
+document.getElementById("send").onclick = async () => {
+  busy = true;
+  const btn = document.getElementById("send");
+  btn.disabled = true;
+  btn.textContent = "DERIVING · SIGNING · BROADCASTING · MINTING RECEIPTS…";
+  document.getElementById("err").textContent = "";
+  try {
+    const res = await (await fetch("wallet/send", { method: "POST" })).json();
+    if (res.error) throw new Error(res.error);
+    showSent(res);
+  } catch (e) {
+    document.getElementById("err").textContent = e.message;
+    btn.disabled = false;
+    btn.textContent = "RETRY — SEND 21,000 SATS";
+  } finally {
+    busy = false;
+  }
+};
+
+poll();
+setInterval(poll, 8000);
+</script>
+</body>
+</html>

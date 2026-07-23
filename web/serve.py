@@ -15,6 +15,9 @@ import os
 import re
 import subprocess
 import threading
+import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8552"))
@@ -22,6 +25,11 @@ RECEIPT_BIN = os.environ.get("RECEIPT_BIN", "target/release/receipt")
 BUNDLE_DIR = os.environ.get("BUNDLE_DIR", "data/bundles")
 CACHE_DIR = os.environ.get("CACHE_DIR", "data/cache")
 OTS_DIR = os.environ.get("OTS_DIR", "data/ots")
+ESPLORA = os.environ.get("ESPLORA", "https://mempool.space/signet/api")
+DATA_DIR = os.path.dirname(BUNDLE_DIR) or "data"
+SENDER_FILE = os.environ.get("SENDER_FILE", os.path.join(DATA_DIR, "sender.json"))
+KEYS_FILE = os.environ.get("KEYS_FILE", os.path.join(DATA_DIR, "keys.json"))
+SENT_MARK = os.path.join(DATA_DIR, "wallet-sent.json")
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -39,6 +47,94 @@ def find_ots():
 OTS_BIN = find_ots()
 _ots_cache = {}
 _witness_lock = threading.Lock()
+_send_lock = threading.Lock()
+
+
+def esplora(path, data=None):
+    req = urllib.request.Request(ESPLORA + path, data=data,
+                                 headers={"User-Agent": "silent-receipts-demo"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.read()
+
+
+def wallet_status():
+    try:
+        sender = json.load(open(SENDER_FILE))
+    except OSError:
+        return {"error": "no sender wallet configured on this server"}
+    out = {"address": sender["address"], "balance_sats": 0, "utxos": 0}
+    try:
+        out["to_code"] = json.load(open(KEYS_FILE))["address"]
+    except OSError:
+        out["to_code"] = None
+    if os.path.isfile(SENT_MARK):
+        try:
+            out["sent"] = json.load(open(SENT_MARK))
+        except (OSError, json.JSONDecodeError):
+            pass
+    try:
+        utxos = json.loads(esplora(f"/address/{sender['address']}/utxo"))
+        out["balance_sats"] = sum(u["value"] for u in utxos)
+        out["utxos"] = len(utxos)
+    except Exception as e:
+        out["error"] = f"esplora: {e}"
+    return out
+
+
+def wallet_send():
+    """The whole show: derive + sign (Rust), broadcast, cache, mint all bundles."""
+    with _send_lock:
+        if os.path.isfile(SENT_MARK):
+            return 409, {"error": "demo payment already sent",
+                         "sent": json.load(open(SENT_MARK))}
+        sender = json.load(open(SENDER_FILE))
+        utxos = json.loads(esplora(f"/address/{sender['address']}/utxo"))
+        if not utxos:
+            return 400, {"error": "wallet not funded yet — no UTXOs"}
+        u = max(utxos, key=lambda x: x["value"])
+        spk = "5120" + sender["xonly"]
+        proc = subprocess.run(
+            [RECEIPT_BIN, "send", "--sender", SENDER_FILE, "--keys", KEYS_FILE,
+             "--utxo", f"{u['txid']}:{u['vout']}:{u['value']}:{spk}"],
+            capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            return 500, {"error": "send: " + proc.stderr.strip()[:400]}
+        sendres = json.loads(proc.stdout)
+        try:
+            txid = esplora("/tx", data=sendres["hex"].encode()).decode().strip()
+        except urllib.error.HTTPError as e:
+            return 500, {"error": "broadcast: " + e.read().decode()[:300]}
+        for _ in range(10):  # esplora indexes mempool txs near-instantly
+            r = subprocess.run(["scripts/fetch_tx.sh", txid, "signet"],
+                              capture_output=True, timeout=30,
+                              env={**os.environ, "CACHE_DIR": CACHE_DIR})
+            if r.returncode == 0:
+                break
+            time.sleep(2)
+
+        def mint(verifier, out_name):
+            return subprocess.run(
+                [RECEIPT_BIN, "prove", "--txid", txid, "--verifier", verifier,
+                 "--own", "--keys", KEYS_FILE, "--cache", CACHE_DIR,
+                 "--out", os.path.join(BUNDLE_DIR, out_name)],
+                capture_output=True, text=True, timeout=30)
+
+        mint("accountant", "auditor-receipt.json")
+        mint("arbitrator", "attack2-receipt.json")
+        try:  # the fake tour: same bundle, doctored secret, claims nothing arrived
+            b = json.load(open(os.path.join(BUNDLE_DIR, "attack2-receipt.json")))
+            b["claim"] = "not_paid"
+            b["shared_secret"] = ("0279be667ef9dcbbac55a06295ce870b0"
+                                  "7029bfcdb2dce28d959f2815b16f81798")
+            b["outputs"] = []
+            json.dump(b, open(os.path.join(BUNDLE_DIR, "attack2-fake-tour.json"), "w"),
+                      indent=2)
+        except (OSError, json.JSONDecodeError):
+            pass
+        mark = {"txid": txid, "amount_sats": sendres.get("amount_sats"),
+                "to": sendres.get("to")}
+        json.dump(mark, open(SENT_MARK, "w"))
+        return 200, mark
 
 
 def ots_status(path):
@@ -127,6 +223,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             with open(os.path.join(WEB_DIR, "index.html"), "rb") as f:
                 self._send(200, f.read(), "text/html; charset=utf-8")
+        elif self.path in ("/wallet", "/wallet/"):
+            with open(os.path.join(WEB_DIR, "wallet.html"), "rb") as f:
+                self._send(200, f.read(), "text/html; charset=utf-8")
+        elif self.path == "/wallet/status":
+            self._send(200, wallet_status())
         elif self.path == "/bundles":
             items = []
             if os.path.isdir(BUNDLE_DIR):
@@ -153,6 +254,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/wallet/send":
+            try:
+                code, body = wallet_send()
+                self._send(code, body)
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+            return
         if self.path != "/verify":
             self._send(404, {"error": "not found"})
             return
