@@ -735,6 +735,108 @@ fn cmd_send(args: &[String]) {
     println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
 }
 
+/// Spend a silent-payment output we received (key = b_spend + t_k) to a plain
+/// address. Proves the ownership tier is real money, and funds the demo's
+/// sender wallet from the demo's own receipts.
+fn cmd_spend(args: &[String]) {
+    let keys_path = flag(args, "--keys").unwrap_or_else(|| "data/keys.json".into());
+    let txid_s = flag(args, "--txid").unwrap_or_else(|| die("--txid required"));
+    let cache = flag(args, "--cache").unwrap_or_else(|| "data/cache".into());
+    let dest = flag(args, "--dest").unwrap_or_else(|| die("--dest address required"));
+    let amount: u64 = flag(args, "--amount")
+        .unwrap_or_else(|| die("--amount required"))
+        .parse()
+        .unwrap_or_else(|e| die(&format!("--amount: {e}")));
+    let fee: u64 = flag(args, "--fee")
+        .unwrap_or_else(|| "400".into())
+        .parse()
+        .unwrap_or_else(|e| die(&format!("--fee: {e}")));
+
+    let (keys, scan_sk, spend_sk) = load_keys(&keys_path);
+    let secp = Secp256k1::new();
+    let spend_pk = PublicKey::from_secret_key(&secp, &spend_sk);
+    let (tx, prevouts) = load_tx(&cache, &txid_s).unwrap_or_else(|e| die(&e));
+    let tweak_point = compute_tweak_data(&tx, &prevouts)
+        .unwrap_or_else(|e| die(&format!("compute_tweak_data: {e:?}")));
+    let shared = compute_shared_secret(&scan_sk, &tweak_point);
+    let founds = scan_txouts(spend_pk, &BTreeMap::new(), &tx, shared)
+        .unwrap_or_else(|e| die(&format!("scan_txouts: {e:?}")));
+    let spout = founds
+        .first()
+        .unwrap_or_else(|| die("no silent payment to our code in that tx"));
+    let value = spout.amount.to_sat();
+    if value <= amount + fee {
+        die(&format!("output too small: {value} <= {}", amount + fee));
+    }
+
+    // The derived output key: p_k = b_spend + t_k. This is the ownership tier, cashed in.
+    let p_k = spend_sk
+        .add_tweak(&Scalar::from(spout.tweak))
+        .unwrap_or_else(|e| die(&format!("p_k tweak: {e}")));
+    let keypair = Keypair::from_secret_key(&secp, &p_k);
+
+    let net = match keys.network.as_str() {
+        "mainnet" | "bitcoin" => Network::Bitcoin,
+        "signet" => Network::Signet,
+        "testnet" => Network::Testnet,
+        _ => Network::Regtest,
+    };
+    let dest_spk = dest
+        .parse::<bdk_sp::bitcoin::address::Address<bdk_sp::bitcoin::address::NetworkUnchecked>>()
+        .unwrap_or_else(|e| die(&format!("dest address: {e}")))
+        .require_network(net)
+        .unwrap_or_else(|e| die(&format!("dest network: {e}")))
+        .script_pubkey();
+
+    let mut outputs = vec![TxOut {
+        value: Amount::from_sat(amount),
+        script_pubkey: dest_spk,
+    }];
+    let change = value - amount - fee;
+    if change >= 330 {
+        outputs.push(TxOut {
+            value: Amount::from_sat(change),
+            script_pubkey: spout.script_pubkey.clone(),
+        });
+    }
+    let mut newtx = Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: spout.outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(),
+        }],
+        output: outputs,
+    };
+    let prevout = TxOut {
+        value: spout.amount,
+        script_pubkey: spout.script_pubkey.clone(),
+    };
+    let sighash = SighashCache::new(&newtx)
+        .taproot_key_spend_signature_hash(0, &Prevouts::All(&[prevout]), TapSighashType::Default)
+        .unwrap_or_else(|e| die(&format!("sighash: {e}")));
+    let sig = secp.sign_schnorr_with_aux_rand(
+        &Message::from_digest(sighash.to_byte_array()),
+        &keypair,
+        &urandom32(),
+    );
+    let mut witness = Witness::new();
+    witness.push(sig.as_ref());
+    newtx.input[0].witness = witness;
+
+    let out = serde_json::json!({
+        "txid": newtx.compute_txid().to_string(),
+        "hex": serialize_hex(&newtx),
+        "spent_outpoint": spout.outpoint.to_string(),
+        "dest": dest,
+        "amount_sats": amount,
+        "change_sats": change,
+    });
+    println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+}
+
 fn usage() -> ! {
     eprintln!(
         "silent-receipts — receipts for BIP352 silent payments
@@ -761,6 +863,7 @@ fn main() {
         Some("prove") => cmd_prove(&args),
         Some("verify") => cmd_verify(&args),
         Some("send") => cmd_send(&args),
+        Some("spend") => cmd_spend(&args),
         _ => usage(),
     }
 }
