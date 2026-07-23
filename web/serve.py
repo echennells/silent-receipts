@@ -84,9 +84,6 @@ def wallet_status():
 def wallet_send():
     """The whole show: derive + sign (Rust), broadcast, cache, mint all bundles."""
     with _send_lock:
-        if os.path.isfile(SENT_MARK):
-            return 409, {"error": "demo payment already sent",
-                         "sent": json.load(open(SENT_MARK))}
         sender = json.load(open(SENDER_FILE))
         utxos = json.loads(esplora(f"/address/{sender['address']}/utxo"))
         if not utxos:
@@ -124,18 +121,23 @@ def wallet_send():
                  "--out", os.path.join(BUNDLE_DIR, out_name)],
                 capture_output=True, text=True, timeout=30)
 
-        mint("accountant", "auditor-receipt.json")
-        mint("arbitrator", "attack2-receipt.json")
-        try:  # the fake tour: same bundle, doctored secret, claims nothing arrived
-            b = json.load(open(os.path.join(BUNDLE_DIR, "attack2-receipt.json")))
-            b["claim"] = "not_paid"
-            b["shared_secret"] = ("0279be667ef9dcbbac55a06295ce870b0"
-                                  "7029bfcdb2dce28d959f2815b16f81798")
-            b["outputs"] = []
-            json.dump(b, open(os.path.join(BUNDLE_DIR, "attack2-fake-tour.json"), "w"),
-                      indent=2)
-        except (OSError, json.JSONDecodeError):
-            pass
+        if os.path.isfile(os.path.join(BUNDLE_DIR, "auditor-receipt.json")):
+            # The story bundles already exist from an earlier (confirmed) payment.
+            # A live send during the pitch mints an EXTRA exhibit, never clobbers.
+            mint("the room", f"live-receipt-{txid[:8]}.json")
+        else:
+            mint("accountant", "auditor-receipt.json")
+            mint("arbitrator", "attack2-receipt.json")
+            try:  # the fake tour: same bundle, doctored secret, claims nothing arrived
+                b = json.load(open(os.path.join(BUNDLE_DIR, "attack2-receipt.json")))
+                b["claim"] = "not_paid"
+                b["shared_secret"] = ("0279be667ef9dcbbac55a06295ce870b0"
+                                      "7029bfcdb2dce28d959f2815b16f81798")
+                b["outputs"] = []
+                json.dump(b, open(os.path.join(BUNDLE_DIR, "attack2-fake-tour.json"), "w"),
+                          indent=2)
+            except (OSError, json.JSONDecodeError):
+                pass
         mark = {"txid": txid, "amount_sats": sendres.get("amount_sats"),
                 "to": sendres.get("to")}
         json.dump(mark, open(SENT_MARK, "w"))

@@ -130,8 +130,7 @@ async function poll() {
 
 function showSent(s) {
   const btn = document.getElementById("send");
-  btn.disabled = true;
-  btn.textContent = "SENT ✓";
+  btn.textContent = "SEND ANOTHER — LIVE";
   const r = document.getElementById("result");
   r.style.display = "block";
   document.getElementById("txid").textContent = s.txid;
