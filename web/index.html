@@ -219,6 +219,9 @@
 <div class="row">
   <section class="panel" aria-label="Scenarios">
     <h2>Three stories — press one to run the verifier</h2>
+    <div id="identity" style="font-size:.76rem; color:var(--dim); border:1px dashed var(--ink-2);
+      border-radius:8px; padding:.55rem .7rem; margin-bottom:1rem; word-break:break-all;
+      line-height:1.5;"></div>
     <div id="bundles"><div class="empty">loading…</div></div>
   </section>
 
@@ -339,6 +342,14 @@ async function loadBundles() {
   const el = document.getElementById("bundles");
   try {
     const items = await (await fetch("bundles")).json();
+    const paid = items.find(b => b.claim === "paid" && b.file.startsWith("auditor")) ||
+                 items.find(b => b.claim === "paid");
+    if (paid) {
+      document.getElementById("identity").innerHTML =
+        `<b style="color:var(--brass)">THIS DEMO'S IDENTITY</b> — receiver code ` +
+        `<b style="color:var(--text)">${short(paid.address, 16)}</b>, paid in tx ` +
+        `${short(paid.txid, 10)}. The 🔄 fresh-demo button mints a new one of everything.`;
+    }
     const { bySlot, leftovers } = assign(items);
     el.innerHTML = "";
     for (const g of GROUPS) {
