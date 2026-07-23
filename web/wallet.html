@@ -92,7 +92,17 @@
     </div>
   </section>
 
-  <footer><a href="./">← back to the demo</a></footer>
+  <footer><a href="./">← back to the demo</a> ·
+  <a href="#" id="reset">reset demo</a>
+  <span style="opacity:.7">(clears live-send exhibits only — funds and story buttons untouched)</span></footer>
+
+  <script>
+  document.getElementById("reset").onclick = async (e) => {
+    e.preventDefault();
+    await fetch("wallet/reset", { method: "POST" });
+    location.reload();
+  };
+  </script>
 </main>
 
 <script>

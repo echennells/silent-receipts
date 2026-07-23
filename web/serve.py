@@ -261,6 +261,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/wallet/reset":
+            # Clears ONLY the extra live-send exhibits. Never touches keys, funds,
+            # the cache, or the five story bundles.
+            removed = []
+            for f in os.listdir(BUNDLE_DIR):
+                if f.startswith("live-receipt-") and f.endswith(".json"):
+                    os.remove(os.path.join(BUNDLE_DIR, f))
+                    removed.append(f)
+            if os.path.isfile(SENT_MARK):
+                os.remove(SENT_MARK)
+            self._send(200, {"removed": removed})
+            return
         if self.path == "/wallet/send":
             try:
                 code, body = wallet_send()
