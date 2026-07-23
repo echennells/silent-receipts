@@ -18,15 +18,24 @@ use std::fs;
 use std::io::Read;
 use std::process::exit;
 
+use bdk_sp::bitcoin::absolute::LockTime;
 use bdk_sp::bitcoin::consensus::encode::deserialize as consensus_deserialize;
+use bdk_sp::bitcoin::consensus::encode::serialize_hex;
 use bdk_sp::bitcoin::hashes::{sha256, Hash};
+use bdk_sp::bitcoin::key::Parity;
 use bdk_sp::bitcoin::secp256k1::{
     schnorr, Keypair, Message, PublicKey, Scalar, Secp256k1, SecretKey, XOnlyPublicKey,
 };
-use bdk_sp::bitcoin::{Amount, Network, ScriptBuf, Transaction, TxOut};
+use bdk_sp::bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
+use bdk_sp::bitcoin::transaction::Version;
+use bdk_sp::bitcoin::{
+    Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+};
 use bdk_sp::compute_shared_secret;
 use bdk_sp::encoding::SilentPaymentCode;
-use bdk_sp::receive::{compute_tweak_data, scan_txouts};
+use bdk_sp::hashes::get_input_hash;
+use bdk_sp::receive::{compute_tweak_data, get_silentpayment_script_pubkey, scan_txouts};
+use bdk_sp::LexMin;
 use dleq::{dleq_generate_proof, dleq_verify_proof};
 use serde::{Deserialize, Serialize};
 
@@ -596,6 +605,136 @@ fn cmd_verify(args: &[String]) {
     );
 }
 
+#[derive(Serialize, Deserialize)]
+struct SenderFile {
+    network: String,
+    privkey: String,
+    xonly: String,
+    address: String,
+}
+
+/// Construct, derive, and sign a real BIP352 silent payment from a single
+/// P2TR key-path UTXO held by the demo's sender wallet. Prints {txid, hex};
+/// broadcasting is the caller's job (the server POSTs it to esplora).
+fn cmd_send(args: &[String]) {
+    let sender_path = flag(args, "--sender").unwrap_or_else(|| "data/sender.json".into());
+    let utxo = flag(args, "--utxo").unwrap_or_else(|| die("--utxo txid:vout:value:spk_hex"));
+    let amount: u64 = flag(args, "--amount")
+        .unwrap_or_else(|| "21000".into())
+        .parse()
+        .unwrap_or_else(|e| die(&format!("--amount: {e}")));
+    let fee: u64 = flag(args, "--fee")
+        .unwrap_or_else(|| "400".into())
+        .parse()
+        .unwrap_or_else(|e| die(&format!("--fee: {e}")));
+    let to = flag(args, "--to").unwrap_or_else(|| {
+        let (keys, _, _) = load_keys(&flag(args, "--keys").unwrap_or_else(|| "data/keys.json".into()));
+        keys.address
+    });
+
+    let secp = Secp256k1::new();
+    let raw = fs::read_to_string(&sender_path)
+        .unwrap_or_else(|e| die(&format!("{sender_path}: {e}")));
+    let sender: SenderFile =
+        serde_json::from_str(&raw).unwrap_or_else(|e| die(&format!("sender parse: {e}")));
+    let mut sk = SecretKey::from_slice(
+        &hex::decode(&sender.privkey).unwrap_or_else(|e| die(&format!("privkey hex: {e}"))),
+    )
+    .unwrap_or_else(|e| die(&format!("privkey: {e}")));
+    // Taproot key-path + BIP352 both want the even-Y key; normalize defensively.
+    let (xonly, parity) = Keypair::from_secret_key(&secp, &sk).x_only_public_key();
+    if parity == Parity::Odd {
+        sk = sk.negate();
+    }
+    let keypair = Keypair::from_secret_key(&secp, &sk);
+
+    let code = SilentPaymentCode::try_from(to.as_str())
+        .unwrap_or_else(|e| die(&format!("recipient code: {e:?}")));
+
+    // --utxo txid:vout:value:spk_hex
+    let parts: Vec<&str> = utxo.split(':').collect();
+    if parts.len() != 4 {
+        die("--utxo must be txid:vout:value:spk_hex");
+    }
+    let txid: bdk_sp::bitcoin::Txid =
+        parts[0].parse().unwrap_or_else(|e| die(&format!("utxo txid: {e}")));
+    let vout: u32 = parts[1].parse().unwrap_or_else(|e| die(&format!("utxo vout: {e}")));
+    let value: u64 = parts[2].parse().unwrap_or_else(|e| die(&format!("utxo value: {e}")));
+    let spk = ScriptBuf::from_hex(parts[3]).unwrap_or_else(|e| die(&format!("utxo spk: {e}")));
+    let mut expect = vec![0x51u8, 0x20];
+    expect.extend_from_slice(&xonly.serialize());
+    if spk.as_bytes() != expect.as_slice() {
+        die("utxo scriptpubkey does not match the sender key");
+    }
+    if value <= amount + fee {
+        die(&format!("utxo too small: {value} <= {} needed", amount + fee));
+    }
+
+    // BIP352 sender-side derivation for a single taproot key-path input:
+    // S = (input_hash · a) · B_scan, output = B_spend + hash(S‖0)·G.
+    let outpoint = OutPoint::new(txid, vout);
+    let mut lex_min = LexMin::default();
+    lex_min.update(&outpoint);
+    let a_sum_pub = xonly.public_key(Parity::Even);
+    let input_hash = get_input_hash(
+        &lex_min.bytes().unwrap_or_else(|e| die(&format!("lex_min: {e}"))),
+        &a_sum_pub,
+    );
+    let combined = sk
+        .mul_tweak(&input_hash)
+        .unwrap_or_else(|e| die(&format!("scalar combine: {e}")));
+    let shared_secret = code
+        .scan
+        .mul_tweak(&secp, &Scalar::from(combined))
+        .unwrap_or_else(|e| die(&format!("ecdh: {e}")));
+    let sp_spk = get_silentpayment_script_pubkey(&code.spend, &shared_secret, 0, None);
+
+    let mut outputs = vec![TxOut {
+        value: Amount::from_sat(amount),
+        script_pubkey: sp_spk,
+    }];
+    let change = value - amount - fee;
+    if change >= 330 {
+        outputs.push(TxOut {
+            value: Amount::from_sat(change),
+            script_pubkey: spk.clone(),
+        });
+    }
+    let mut tx = Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(),
+        }],
+        output: outputs,
+    };
+
+    let prevout = TxOut {
+        value: Amount::from_sat(value),
+        script_pubkey: spk,
+    };
+    let sighash = SighashCache::new(&tx)
+        .taproot_key_spend_signature_hash(0, &Prevouts::All(&[prevout]), TapSighashType::Default)
+        .unwrap_or_else(|e| die(&format!("sighash: {e}")));
+    let msg = Message::from_digest(sighash.to_byte_array());
+    let sig = secp.sign_schnorr_with_aux_rand(&msg, &keypair, &urandom32());
+    let mut witness = Witness::new();
+    witness.push(sig.as_ref());
+    tx.input[0].witness = witness;
+
+    let out = serde_json::json!({
+        "txid": tx.compute_txid().to_string(),
+        "hex": serialize_hex(&tx),
+        "to": to,
+        "amount_sats": amount,
+        "fee_sats": fee,
+    });
+    println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+}
+
 fn usage() -> ! {
     eprintln!(
         "silent-receipts — receipts for BIP352 silent payments
@@ -606,6 +745,8 @@ USAGE:
   receipt prove   --txid <txid> [--keys data/keys.json] [--cache data/cache]
                   [--verifier <name>] [--own] [--out <bundle.json>]
   receipt verify  --bundle <bundle.json> [--cache data/cache]
+  receipt send    --utxo txid:vout:value:spk_hex [--to <sp code>] [--amount 21000]
+                  [--fee 400] [--sender data/sender.json]
 
 Fetch chain data first:  scripts/fetch_tx.sh <txid> [signet|mainnet]"
     );
@@ -619,6 +760,7 @@ fn main() {
         Some("address") => cmd_address(&args),
         Some("prove") => cmd_prove(&args),
         Some("verify") => cmd_verify(&args),
+        Some("send") => cmd_send(&args),
         _ => usage(),
     }
 }
