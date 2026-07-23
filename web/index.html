@@ -52,7 +52,7 @@
 
   /* ---------- layout ---------- */
   .row {
-    display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+    display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
     gap: 1.4rem; margin-top: 1.8rem; align-items: start;
   }
   @media (max-width: 880px) { .row { grid-template-columns: 1fr; } }
@@ -67,7 +67,14 @@
     margin-bottom: 1rem;
   }
 
-  /* ---------- exhibits (bundle list) ---------- */
+  /* ---------- stories (bundle list) ---------- */
+  .ghead { margin: 1.1rem 0 .2rem; }
+  .ghead:first-child { margin-top: 0; }
+  .ghead h3 {
+    font-size: .82rem; letter-spacing: .06em; font-weight: 800;
+    text-transform: uppercase;
+  }
+  .ghead p { color: var(--dim); font-size: .76rem; margin: .15rem 0 .55rem; }
   .exhibit {
     display: block; width: 100%; text-align: left; cursor: pointer;
     background: var(--ink-0); color: var(--text);
@@ -93,6 +100,11 @@
   .exhibit.evidence { border-left-color: var(--brass); }
   .exhibit.evidence .eyebrow { color: var(--brass); }
   .exhibit.receipt-ok { border-left-color: var(--ok); }
+  .exhibit.pending {
+    cursor: default; border-style: dashed; background: transparent;
+  }
+  .exhibit.pending .title { color: var(--dim); font-weight: 400; }
+  .exhibit.pending:hover { background: transparent; }
   .empty { color: var(--dim); font-size: .85rem; line-height: 1.7; }
   .empty code { color: var(--text); }
 
@@ -185,31 +197,6 @@
   ol.steps li.bad .nm::before { content: "✗ "; color: var(--void); }
   ol.steps li .dt { color: var(--dim); display: block; margin-top: .12rem; }
 
-  /* ---------- gratuitous timestamps ---------- */
-  .otsbar { margin-top: 1.4rem; }
-  .otsbar .counts { font-size: .82rem; margin-bottom: .4rem; }
-  .otsbar .counts b { color: var(--brass); font-variant-numeric: tabular-nums; }
-  .otsbar .blurb {
-    color: var(--dim); font-size: .76rem; max-width: 82ch;
-    line-height: 1.65; margin-bottom: 1rem;
-  }
-  .otslist {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: .35rem .9rem; font-size: .72rem;
-  }
-  .otslist .t { display: flex; gap: .45rem; align-items: baseline; min-width: 0; }
-  .otslist .t .n {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text);
-  }
-  .otskind {
-    flex: none; font-size: .58rem; letter-spacing: .1em;
-    text-transform: uppercase; color: var(--dim); margin-left: auto;
-  }
-  .dot { flex: none; width: .5rem; height: .5rem; border-radius: 50%; align-self: center; }
-  .dot.pending { border: 1.5px solid var(--brass); }
-  .dot.bitcoin { background: var(--ok); }
-  .dot.unknown { border: 1.5px solid var(--ink-2); }
-
   footer {
     color: var(--dim); font-size: .74rem; margin-top: 2.4rem;
     max-width: 78ch; line-height: 1.7;
@@ -230,21 +217,22 @@
 </header>
 
 <div class="row">
-  <section class="panel" aria-label="The two attacks">
-    <h2>The two attacks</h2>
+  <section class="panel" aria-label="Scenarios">
+    <h2>Three stories — press one to run the verifier</h2>
     <div id="bundles"><div class="empty">loading…</div></div>
   </section>
 
   <section class="panel" aria-label="Verification">
     <h2>Verification</h2>
     <div class="empty" id="hint">
-      Select an exhibit. The verifier re-derives every slot in the transaction where a
-      payment to the address could exist — from <b>public chain data only</b>: no node,
-      no keys, no trust in whoever handed over the bundle.
+      Each button is a real receipt bundle on disk. Pressing it runs the actual verifier —
+      live, right then — against cached chain data: it re-derives every slot in the
+      transaction where a payment to the code could exist, using <b>public data only</b>.
+      No node, no keys, no trust in whoever handed over the bundle.
     </div>
     <div id="verdict">
       <div class="slip">
-        <div class="slip-head">Silent receipt · bilateral disclosure · one transaction</div>
+        <div class="slip-head">Silent receipt · one transaction · scan key stays home</div>
         <div class="stamp" id="stamp"></div>
         <div class="ledger" id="ledger"></div>
         <div class="fineprint" id="scope"></div>
@@ -256,18 +244,6 @@
     </div>
   </section>
 </div>
-
-<section class="panel otsbar" aria-label="Gratuitous timestamps">
-  <h2>Gratuitous timestamps · an OpenTimestamps tribute</h2>
-  <div class="counts" id="ots-counts">counting…</div>
-  <p class="blurb">Exactly one of these is load-bearing: <b>the address</b> — every receipt's
-  soundness rests on it provably pre-dating the payment. The rest is tribute: the receipt
-  bundles, the source, the compiled binary, this web page, the server behind it, the stamping
-  script (which stamps itself), the proofs of the proofs — and <b>the verification you just
-  triggered</b>, which was written to disk and timestamped while you were reading its verdict.
-  ● anchored in Bitcoin &nbsp;·&nbsp; ○ pending calendar aggregation.</p>
-  <div class="otslist" id="ots-list"></div>
-</section>
 
 <footer>
   One primitive, four sentences: <i>I was paid</i> / <i>it paid me nothing</i> (receiver) ·
@@ -283,59 +259,111 @@ const STAMP = {
   INVALID:         { text: "Void · proof rejected",  cls: "void" },
 };
 
-/* Exhibit roles are read off the bundle filename prefix. Two attacks, nothing else:
-   Attack 1 = the fake payment claim ("I paid you") — defense proof + his forged evidence.
-   Attack 2 = the payment denial ("never arrived") — the honest receipt + the fake tour. */
-const ROLES = [
-  { pre: "attack1-forged", cls: "evidence",
-    eyebrow: "Attack 1 · his forged evidence",
-    title: "The claimant’s own “receipt”" },
-  { pre: "attack1", cls: "defense",
-    eyebrow: "Attack 1 · the fake payment claim",
-    title: "“You owe me — I already paid you.”" },
-  { pre: "attack2-fake", cls: "evidence",
-    eyebrow: "Attack 2 · the fake tour",
-    title: "“Nothing arrived” — with a doctored secret" },
-  { pre: "attack2", cls: "receipt-ok",
-    eyebrow: "Attack 2 · the payment denial, busted",
-    title: "The payment, proven from public data" },
+/* The demo's three stories. Each slot matches bundle files by name prefix; a slot
+   with no bundle yet renders as a dashed placeholder. */
+const GROUPS = [
+  { head: "The auditor case",
+    sub: "Prove one payment to a stranger — the scan key stays home.",
+    slots: [
+      { pre: "auditor", cls: "receipt-ok",
+        eyebrow: "One-transaction disclosure",
+        title: "“This payment went to me.”",
+        pending: "Awaiting the demo payment — appears the moment the code is paid." },
+    ] },
+  { head: "Attack 1 — the fake payment claim",
+    sub: "“I paid you — where’s my refund?” He never paid.",
+    slots: [
+      { pre: "attack1-forged", cls: "evidence",
+        eyebrow: "His forged evidence",
+        title: "The claimant’s own “receipt”" },
+      { pre: "attack1", cls: "defense",
+        eyebrow: "The defense",
+        title: "“That tx paid my code nothing.”" },
+    ] },
+  { head: "Attack 2 — the payment denial",
+    sub: "“Never arrived, send it again.” It arrived.",
+    slots: [
+      { pre: "attack2-fake", cls: "evidence",
+        eyebrow: "The fake tour",
+        title: "“Nothing arrived” — doctored secret",
+        pending: "Awaiting the demo payment." },
+      { pre: "attack2", cls: "receipt-ok",
+        eyebrow: "The honest receipt, compelled",
+        title: "The payment, proven — denial busted",
+        pending: "Awaiting the demo payment." },
+    ] },
 ];
-
-function role(file, claim) {
-  for (const r of ROLES) if (file.startsWith(r.pre)) return r;
-  return claim === "paid"
-    ? { pre: "", cls: "receipt-ok", eyebrow: "Receipt", title: "Payment claimed — verify it" }
-    : { pre: "", cls: "defense", eyebrow: "Dispute", title: "“This tx paid me nothing”" };
-}
 
 function short(s, n = 12) { return s && s.length > 2 * n ? s.slice(0, n) + "…" + s.slice(-n) : s; }
 function sats(n) { return n.toLocaleString("en-US") + " sats"; }
+
+/* Assign each bundle to the slot with the longest matching filename prefix. */
+function assign(items) {
+  const slots = GROUPS.flatMap(g => g.slots);
+  const bySlot = new Map();
+  const leftovers = [];
+  for (const b of items) {
+    let best = null;
+    for (const s of slots) {
+      if (b.file.startsWith(s.pre) && (!best || s.pre.length > best.pre.length)) best = s;
+    }
+    if (best) {
+      if (!bySlot.has(best.pre)) bySlot.set(best.pre, []);
+      bySlot.get(best.pre).push(b);
+    } else {
+      leftovers.push(b);
+    }
+  }
+  return { bySlot, leftovers };
+}
+
+function exhibitButton(slot, b) {
+  const btn = document.createElement("button");
+  btn.className = "exhibit " + slot.cls;
+  btn.setAttribute("aria-pressed", "false");
+  btn.innerHTML =
+    `<span class="eyebrow">${slot.eyebrow}</span>` +
+    `<span class="title">${slot.title}</span>` +
+    `<span class="meta">tx ${short(b.txid)}<br>→ ${short(b.address, 14)} · for ${b.verifier}</span>`;
+  btn.onclick = () => {
+    document.querySelectorAll(".exhibit[aria-pressed]").forEach(x =>
+      x.setAttribute("aria-pressed", "false"));
+    btn.setAttribute("aria-pressed", "true");
+    verify(b.file);
+  };
+  return btn;
+}
 
 async function loadBundles() {
   const el = document.getElementById("bundles");
   try {
     const items = await (await fetch("bundles")).json();
-    if (!items.length) {
-      el.innerHTML = '<div class="empty">No exhibits yet.<br><br>Mint one:<br>' +
-        '<code>receipt prove --txid &lt;txid&gt; --verifier judge</code></div>';
-      return;
-    }
+    const { bySlot, leftovers } = assign(items);
     el.innerHTML = "";
-    for (const b of items) {
-      const r = role(b.file, b.claim);
-      const btn = document.createElement("button");
-      btn.className = "exhibit " + r.cls;
-      btn.setAttribute("aria-pressed", "false");
-      btn.innerHTML =
-        `<span class="eyebrow">${r.eyebrow}</span>` +
-        `<span class="title">${r.title}</span>` +
-        `<span class="meta">tx ${short(b.txid)}<br>→ ${short(b.address, 14)} · for ${b.verifier}</span>`;
-      btn.onclick = () => {
-        document.querySelectorAll(".exhibit").forEach(x => x.setAttribute("aria-pressed", "false"));
-        btn.setAttribute("aria-pressed", "true");
-        verify(b.file);
-      };
-      el.appendChild(btn);
+    for (const g of GROUPS) {
+      const gh = document.createElement("div");
+      gh.className = "ghead";
+      gh.innerHTML = `<h3>${g.head}</h3><p>${g.sub}</p>`;
+      el.appendChild(gh);
+      for (const slot of g.slots) {
+        const matched = bySlot.get(slot.pre) || [];
+        if (matched.length) {
+          for (const b of matched) el.appendChild(exhibitButton(slot, b));
+        } else if (slot.pending) {
+          const d = document.createElement("div");
+          d.className = "exhibit pending " + slot.cls;
+          d.innerHTML = `<span class="eyebrow">${slot.eyebrow}</span>` +
+                        `<span class="title">${slot.pending}</span>`;
+          el.appendChild(d);
+        }
+      }
+    }
+    for (const b of leftovers) {
+      el.appendChild(exhibitButton({
+        cls: b.claim === "paid" ? "receipt-ok" : "defense",
+        eyebrow: "Extra exhibit",
+        title: b.file,
+      }, b));
     }
   } catch (e) {
     el.innerHTML = `<div class="empty">error: ${e}</div>`;
@@ -379,7 +407,7 @@ function render(r) {
   stamp.textContent = s.text;
 
   let rows =
-    lrow("address", short(r.address, 16)) +
+    lrow("code", short(r.address, 16)) +
     lrow("transaction", short(r.txid, 16)) +
     lrow("issued to", r.verifier);
   for (const o of r.outputs || []) {
@@ -397,34 +425,9 @@ function render(r) {
     ol.appendChild(li);
   }
   document.getElementById("scope").textContent = r.scope_note || "";
-  setTimeout(loadTimestamps, 2500);  // your verification is being timestamped right now
-}
-
-async function loadTimestamps() {
-  try {
-    const r = await (await fetch("timestamps")).json();
-    const c = r.counts;
-    document.getElementById("ots-counts").innerHTML =
-      `<b>${c.total}</b> timestamps on disk — <b>${c.artifacts}</b> artifacts · ` +
-      `<b>${c.proofs_of_proofs}</b> proofs of proofs · ` +
-      `<b>${c.verifications}</b> verifications witnessed · ` +
-      `<b>${c.bitcoin}</b> anchored in Bitcoin so far`;
-    const el = document.getElementById("ots-list");
-    el.innerHTML = "";
-    for (const t of r.items) {
-      const d = document.createElement("div");
-      d.className = "t";
-      d.innerHTML = `<span class="dot ${t.status}"></span><span class="n">${t.name}</span>` +
-                    `<span class="otskind">${t.kind}</span>`;
-      el.appendChild(d);
-    }
-  } catch (e) {
-    document.getElementById("ots-counts").textContent = "timestamps: " + e;
-  }
 }
 
 loadBundles();
-loadTimestamps();
 </script>
 </body>
 </html>
