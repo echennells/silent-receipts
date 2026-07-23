@@ -108,6 +108,20 @@ Chain data comes from mempool.space's esplora API, cached to disk on first fetch
 - Revealing `S` discloses every output paying this code *in that transaction* (per-tx granularity,
   not per-output).
 
+## OpenTimestamps (gratuitous)
+
+Exactly **one** timestamp in this project is load-bearing: **the address**. A receipt is only
+meaningful if the address provably pre-dates the transaction (see Security model), and an
+[OpenTimestamps](https://opentimestamps.org) attestation turns that assumption into an artifact.
+
+We did not stop there. `scripts/ots_everything.sh` stamps: the address, every receipt bundle,
+this README, the source, the compiled binary, the web page, the server, **and itself** — then
+makes a second pass and stamps **the proofs of the proofs**. (We stop at depth two only because
+the calendar servers asked us nicely.) The demo server goes further: every verification anyone
+triggers through the GUI is written to disk and timestamped — *the act of checking a receipt is
+itself receipted* — and the page shows a live counter (`GET /timestamps`). The `ots` client is
+baked into the container image, so a fresh clone gets the full tribute with `docker compose up`.
+
 ## License
 
 MIT

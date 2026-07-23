@@ -185,6 +185,31 @@
   ol.steps li.bad .nm::before { content: "✗ "; color: var(--void); }
   ol.steps li .dt { color: var(--dim); display: block; margin-top: .12rem; }
 
+  /* ---------- gratuitous timestamps ---------- */
+  .otsbar { margin-top: 1.4rem; }
+  .otsbar .counts { font-size: .82rem; margin-bottom: .4rem; }
+  .otsbar .counts b { color: var(--brass); font-variant-numeric: tabular-nums; }
+  .otsbar .blurb {
+    color: var(--dim); font-size: .76rem; max-width: 82ch;
+    line-height: 1.65; margin-bottom: 1rem;
+  }
+  .otslist {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: .35rem .9rem; font-size: .72rem;
+  }
+  .otslist .t { display: flex; gap: .45rem; align-items: baseline; min-width: 0; }
+  .otslist .t .n {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text);
+  }
+  .otskind {
+    flex: none; font-size: .58rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--dim); margin-left: auto;
+  }
+  .dot { flex: none; width: .5rem; height: .5rem; border-radius: 50%; align-self: center; }
+  .dot.pending { border: 1.5px solid var(--brass); }
+  .dot.bitcoin { background: var(--ok); }
+  .dot.unknown { border: 1.5px solid var(--ink-2); }
+
   footer {
     color: var(--dim); font-size: .74rem; margin-top: 2.4rem;
     max-width: 78ch; line-height: 1.7;
@@ -231,6 +256,18 @@
     </div>
   </section>
 </div>
+
+<section class="panel otsbar" aria-label="Gratuitous timestamps">
+  <h2>Gratuitous timestamps · an OpenTimestamps tribute</h2>
+  <div class="counts" id="ots-counts">counting…</div>
+  <p class="blurb">Exactly one of these is load-bearing: <b>the address</b> — every receipt's
+  soundness rests on it provably pre-dating the payment. The rest is tribute: the receipt
+  bundles, the source, the compiled binary, this web page, the server behind it, the stamping
+  script (which stamps itself), the proofs of the proofs — and <b>the verification you just
+  triggered</b>, which was written to disk and timestamped while you were reading its verdict.
+  ● anchored in Bitcoin &nbsp;·&nbsp; ○ pending calendar aggregation.</p>
+  <div class="otslist" id="ots-list"></div>
+</section>
 
 <footer>
   One primitive, four sentences: <i>I was paid</i> / <i>it paid me nothing</i> (receiver) ·
@@ -358,9 +395,34 @@ function render(r) {
     ol.appendChild(li);
   }
   document.getElementById("scope").textContent = r.scope_note || "";
+  setTimeout(loadTimestamps, 2500);  // your verification is being timestamped right now
+}
+
+async function loadTimestamps() {
+  try {
+    const r = await (await fetch("timestamps")).json();
+    const c = r.counts;
+    document.getElementById("ots-counts").innerHTML =
+      `<b>${c.total}</b> timestamps on disk — <b>${c.artifacts}</b> artifacts · ` +
+      `<b>${c.proofs_of_proofs}</b> proofs of proofs · ` +
+      `<b>${c.verifications}</b> verifications witnessed · ` +
+      `<b>${c.bitcoin}</b> anchored in Bitcoin so far`;
+    const el = document.getElementById("ots-list");
+    el.innerHTML = "";
+    for (const t of r.items) {
+      const d = document.createElement("div");
+      d.className = "t";
+      d.innerHTML = `<span class="dot ${t.status}"></span><span class="n">${t.name}</span>` +
+                    `<span class="otskind">${t.kind}</span>`;
+      el.appendChild(d);
+    }
+  } catch (e) {
+    document.getElementById("ots-counts").textContent = "timestamps: " + e;
+  }
 }
 
 loadBundles();
+loadTimestamps();
 </script>
 </body>
 </html>
