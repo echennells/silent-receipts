@@ -86,21 +86,21 @@ struct Bundle {
     outputs: Vec<BundleOutput>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Step {
     step: String,
     ok: bool,
     detail: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct VerdictOutput {
     vout: u32,
     amount_sats: u64,
     spend_sig: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Verdict {
     verdict: String,
     address: String,

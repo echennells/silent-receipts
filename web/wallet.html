@@ -112,11 +112,11 @@ async function poll() {
     const btn = document.getElementById("send");
     if (st.sent) {
       showSent(st.sent);
-    } else if ((st.balance_sats || 0) > 25000) {
+    } else if ((st.balance_sats || 0) > 2000) {
       document.getElementById("balance").innerHTML =
         `balance: <b>${st.balance_sats.toLocaleString("en-US")}</b> sats · funded ✓`;
       btn.disabled = false;
-      btn.textContent = "SEND 21,000 SATS — SILENTLY";
+      btn.textContent = "SEND A SILENT PAYMENT";
     } else {
       document.getElementById("balance").innerHTML =
         `balance: <b>${(st.balance_sats || 0).toLocaleString("en-US")}</b> sats — waiting for the faucet…`;

@@ -93,8 +93,13 @@ def wallet_send():
             return 400, {"error": "wallet not funded yet — no UTXOs"}
         u = max(utxos, key=lambda x: x["value"])
         spk = "5120" + sender["xonly"]
+        fee = 400
+        amount = min(21000, u["value"] - fee - 400)  # adapt to whatever the faucet gave
+        if amount < 1000:
+            return 400, {"error": f"largest UTXO too small ({u['value']} sats)"}
         proc = subprocess.run(
             [RECEIPT_BIN, "send", "--sender", SENDER_FILE, "--keys", KEYS_FILE,
+             "--amount", str(amount), "--fee", str(fee),
              "--utxo", f"{u['txid']}:{u['vout']}:{u['value']}:{spk}"],
             capture_output=True, text=True, timeout=30)
         if proc.returncode != 0:
