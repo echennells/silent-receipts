@@ -17,6 +17,18 @@ jobs:
           name: receipt-linux-gnu
           path: target/release/receipt
 
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: receipt-macos-arm64
+          path: target/release/receipt
+
   musl:
     runs-on: ubuntu-latest
     steps:
