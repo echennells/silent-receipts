@@ -111,7 +111,7 @@ function sats(n) { return n.toLocaleString("en-US") + " sats"; }
 async function loadBundles() {
   const el = document.getElementById("bundles");
   try {
-    const items = await (await fetch("/bundles")).json();
+    const items = await (await fetch("bundles")).json();
     if (!items.length) {
       el.innerHTML = '<div class="empty">No bundles yet.<br><br>' +
         'Mint one:<br><code>receipt prove --txid &lt;txid&gt; --verifier judge</code></div>';
@@ -144,7 +144,7 @@ async function verify(file) {
   document.getElementById("kv").innerHTML = "";
   document.getElementById("steps").innerHTML = "";
   try {
-    const res = await (await fetch("/verify", {
+    const res = await (await fetch("verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bundle: file }),

@@ -316,7 +316,7 @@ fn cmd_prove(args: &[String]) {
                 &keypair,
                 &urandom32(),
             );
-            Some(hex::encode(sig.serialize()))
+            Some(sig.to_string())
         } else {
             None
         };
