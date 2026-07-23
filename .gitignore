@@ -7,3 +7,6 @@ data/
 # OpenTimestamps artifacts kept locally with the demo data
 *.ots
 address.txt
+
+# deployed binary (from CI artifacts)
+/receipt
