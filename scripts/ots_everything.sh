@@ -27,7 +27,16 @@ if [ -f "$ROOT/data/keys.json" ]; then
 fi
 
 # --- pass 1: copy public artifacts in, stamp anything unstamped -------------
-copy_in() { [ -f "$1" ] && cp -f "$1" "$ART/$(basename "$1")" || true; }
+# If a file changed since it was stamped, drop the stale proof and restamp:
+# a timestamp for bytes you no longer serve proves nothing about the bytes you do.
+copy_in() {
+  [ -f "$1" ] || return 0
+  local cp_path="$ART/$(basename "$1")"
+  if [ -e "$cp_path" ] && ! cmp -s "$1" "$cp_path"; then
+    rm -f "$cp_path.ots" "$cp_path.ots.ots"
+  fi
+  cp -f "$1" "$cp_path"
+}
 copy_in "$ROOT/README.md"
 copy_in "$ROOT/Cargo.toml"
 copy_in "$ROOT/src/main.rs"
